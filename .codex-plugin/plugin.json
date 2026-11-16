@@ -1,6 +1,6 @@
 {
   "name": "codex-ssh-quota",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "通过 SSH 在桌面面板中查看远端 Codex 最近记录的额度。",
   "mcpServers": "./.mcp.json",
   "interface": {

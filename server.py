@@ -240,7 +240,7 @@ TOOL = {"name": "codex_quota", "title": "Codex SSH 额度", "description": "查�
 
 def dispatch(method, params):
     if method == "initialize":
-        return {"protocolVersion": "2025-11-25", "serverInfo": {"name": "codex-ssh-quota", "version": "0.3.0"},
+        return {"protocolVersion": "2025-11-25", "serverInfo": {"name": "codex-ssh-quota", "version": "0.4.0"},
                 "capabilities": {"tools": {}, "resources": {}}}
     if method == "ping":
         return {}
@@ -259,7 +259,7 @@ def dispatch(method, params):
             return {"isError": True, "content": [{"type": "text", "text": "参数使用 {} 或 {\"force\": true}。"}]}
         try:
             data = quota(force=arguments.get("force", False))
-            return {"content": [{"type": "text", "text": "已读取 SSH Codex SSH 额度快照。"}], "structuredContent": data}
+            return {"content": [{"type": "text", "text": "已读取 Codex SSH 额度快照。"}], "structuredContent": data}
         except QuotaError as exc:
             return {"isError": True, "content": [{"type": "text", "text": str(exc)}]}
     raise LookupError(method)

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import server
 import remote_snapshot
+import hud
 
 
 class QuotaTests(unittest.TestCase):
@@ -22,6 +23,17 @@ class QuotaTests(unittest.TestCase):
             self.assertEqual(server.read_limits(), {"rateLimits": {}})
             launch.assert_not_called()
             self.assertTrue(server.source_key().startswith("local:"))
+
+    def test_hud_shows_remaining_and_marks_expired_snapshots(self):
+        data = {"buckets": [{"id": "codex", "windows": [
+            {"durationMins": 300, "remainingPercent": 70, "resetsAt": 2000},
+            {"durationMins": 10080, "remainingPercent": 96, "resetsAt": 3000}]}]}
+        self.assertEqual(hud.summary(data, now=1000), "SSH · 5小时剩余 70% · 周剩余 96%")
+        expired = hud.summary(data, now=2500)
+        self.assertIn("5小时待更新", expired)
+        self.assertNotIn("70%", expired)
+        data["warning"] = "offline"
+        self.assertIn("缓存", hud.summary(data, now=1000))
 
     def test_installer_stages_private_settings(self):
         import install

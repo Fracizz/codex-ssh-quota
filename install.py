@@ -10,7 +10,7 @@ import sys
 import server
 
 PLUGIN_ID = "codex-ssh-quota@codex-ssh-quota"
-FILES = ("server.py", "remote_snapshot.py", "panel.html", "plugin.json", ".codex-plugin/plugin.json")
+FILES = ("server.py", "remote_snapshot.py", "panel.html", "hud.py", "LICENSE", "plugin.json", ".codex-plugin/plugin.json")
 
 
 def prepare(runtime, settings):
@@ -41,7 +41,10 @@ def main(argv=None):
     sources.add_argument("--ssh-host", help="Existing SSH alias to query from the desktop host")
     sources.add_argument("--local", action="store_true", help="Read snapshots on the current SSH execution host")
     parser.add_argument("--runtime-dir", type=Path, default=Path(__file__).resolve().parent / ".runtime")
+    parser.add_argument("--hud", action="store_true", help="Start the Windows main-window quota companion")
     args = parser.parse_args(argv)
+    if args.hud and os.name != "nt":
+        parser.error("--hud requires the Windows desktop host")
     try:
         configured = server.load_settings()
         if args.local:
@@ -75,6 +78,14 @@ def main(argv=None):
                 print(output[:4000], file=sys.stderr)
                 print("安装未完成，请检查 Codex CLI 后重新运行安装命令。", file=sys.stderr)
                 return result.returncode
+        if args.hud:
+            pythonw = Path(sys.executable).with_name("pythonw.exe")
+            launcher = str(pythonw) if pythonw.exists() else sys.executable
+            hud = str(runtime / "plugin/hud.py")
+            subprocess.run([launcher, hud, "--stop"], timeout=10, check=True)
+            subprocess.Popen([launcher, hud], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
     except server.QuotaError as exc:
         print(str(exc), file=sys.stderr)
         return 1

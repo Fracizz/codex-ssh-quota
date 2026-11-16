@@ -36,6 +36,28 @@ python3 install.py --local
 
 Open a new chat on the configured host and select **Codex SSH 额度**. Restart the desktop client after current work finishes if it retains old plugin metadata. Hosts with text-only tool support can use the structured quota response; the panel requires the UI extensions.
 
+## Windows main-window quota bar
+
+To display the quota directly over the Codex title area:
+
+```powershell
+python install.py --ssh-host my-codex-server --hud
+```
+
+This starts a separate Tk/Win32 companion window anchored to the foreground Codex/ChatGPT desktop window. It follows window movement and DPI changes, and hides when another app takes focus or the client is minimized. It shows the configured SSH source's snapshot; it does not automatically switch SSH sources when you change chats.
+
+Left-click opens details. Right-click offers refresh and close. The bar reuses the ten-minute cache and starts no model turns. It does not modify or inject code into the desktop client.
+
+The companion stays running for the current Windows login session. After restarting Windows, start it again with:
+
+```powershell
+pythonw .runtime/plugin/hud.py
+# Stop the companion:
+python .runtime/plugin/hud.py --stop
+```
+
+Tkinter is required only for the Windows companion and is included in the standard python.org Windows installer. The MCP panel and SSH-host mode do not need Tkinter.
+
 ## Check, update, and remove
 
 ```powershell

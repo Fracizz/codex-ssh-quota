@@ -30,6 +30,25 @@ python3 install.py --local
 
 打开对应主机上的新会话并选择 **Codex SSH 额度**。客户端保留旧插件列表时，先结束当前工作，再重启桌面端。面板入口需要客户端支持 MCP Apps / OpenAI MCP Extensions；仅有文本工具能力的客户端也可以读取返回的结构化额度数据。
 
+## 在 Windows 主界面直接显示
+
+```powershell
+python install.py --ssh-host my-codex-server --hud
+```
+
+额度条贴在 Codex 窗口顶部，显示例如 `SSH · 周剩余 95%`。它是独立的 Tk/Win32 伴随小窗，会跟随前台 Codex/ChatGPT 窗口移动和缩放，切换到其他应用或最小化客户端时隐藏。显示的是已配置 SSH 来源的快照，不会随聊天自动切换 SSH 来源。
+
+左键点击打开详情；右键可刷新或关闭。继续使用 10 分钟缓存，不调用模型，不修改或注入客户端文件。
+
+额度条在当前 Windows 登录会话中持续运行。Windows 重启后可再次启动，也可单独关闭：
+
+```powershell
+pythonw .runtime/plugin/hud.py
+python .runtime/plugin/hud.py --stop
+```
+
+该功能需要 Tkinter，python.org 的标准 Windows 安装包已包含。MCP 面板和 SSH 主机端不依赖 Tkinter。
+
 ## 查询与维护
 
 ```powershell
