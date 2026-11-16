@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Codex SSH 额度</title>
+<style>
+:root{color-scheme:light dark;font-family:var(--font-sans,system-ui);color:var(--color-text-primary,light-dark(#202123,#eee));background:var(--color-background-primary,light-dark(#fff,#1e1e1e))}
+*{box-sizing:border-box}body{margin:0;padding:20px;max-width:760px}header{display:flex;align-items:center;justify-content:space-between;gap:16px}h1{font-size:18px;margin:0}button{font:inherit;font-size:12px;border:1px solid #8885;border-radius:8px;padding:7px 12px;background:transparent;color:inherit;cursor:pointer}button:disabled{opacity:.4;cursor:wait}.muted{font-size:12px;opacity:.65;line-height:1.7;overflow-wrap:anywhere}#source{margin:12px 0 20px}article{border:1px solid #8884;border-radius:12px;margin:12px 0;padding:16px}h2{margin:0 0 16px;font-size:14px}.row{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.percent{font-size:28px;font-variant-numeric:tabular-nums}.window+.window{margin-top:20px}progress{display:block;appearance:none;border:0;width:100%;height:6px;margin:10px 0;border-radius:4px;overflow:hidden;background:#8883}progress::-webkit-progress-bar{background:#8883}progress::-webkit-progress-value{background:var(--bar,#10a37f)}progress::-moz-progress-bar{background:var(--bar,#10a37f)}#error{color:light-dark(#b42318,#ff9a8d);font-size:13px;line-height:1.6}footer{margin-top:18px}.empty{padding:16px 0}
+</style>
+<header><h1>SSH Codex SSH 额度</h1><button id="refresh" disabled>刷新</button></header>
+<p id="source" class="muted">正在读取 SSH 主机的额度快照…</p>
+<div id="error" role="alert"></div><main id="buckets" aria-live="polite"></main>
+<footer class="muted"><div id="resets"></div><div id="updated">快照数据，每 10 分钟检查一次</div></footer>
+<script>
+(() => {
+  const $ = id => document.getElementById(id), pending = new Map();
+  let serial = 0, ready = false, busy = false, timer, lastData, initialTimer, disposed = false;
+  function send(method, params = {}) { parent.postMessage({jsonrpc:'2.0',method,params}, '*'); }
+  function rpc(method, params) {
+    return new Promise((resolve,reject) => {
+      const id = ++serial;
+      const timeout = setTimeout(() => {pending.delete(id); reject(new Error('连接超时，请确认桌面版支持 MCP Apps 面板。'));}, 35000);
+      pending.set(id, {resolve, reject, timeout});
+      parent.postMessage({jsonrpc:'2.0',id,method,params}, '*');
+    });
+  }
+  function el(tag, text, cls) {const n=document.createElement(tag); if(text != null)n.textContent=text;if(cls)n.className=cls;return n;}
+  function duration(mins) {
+    if (!Number.isFinite(mins)) return '额度窗口';
+    if (mins >= 1440 && mins % 1440 === 0) return `${mins/1440} 天额度`;
+    return mins % 60 === 0 ? `${mins/60} 小时额度` : `${mins} 分钟额度`;
+  }
+  function resetTime(stamp) {
+    if (!Number.isFinite(stamp)) return '重置时间未提供';
+    const date=new Date(stamp*1000);
+    if (Number.isFinite(date.getTime()) && date.getTime() < Date.now()) return '记录窗口已到重置时间，快照可能过期';
+    return Number.isFinite(date.getTime()) ? `重置：${date.toLocaleString('zh-CN', {hour12:false})}（本机时间）` : '重置时间未提供';
+  }
+  function render(data) {
+    if (!data || !Array.isArray(data.buckets)) throw new Error('额度数据格式异常。');
+    lastData=data; $('error').textContent=data.warning || ''; $('buckets').replaceChildren();
+    $('source').textContent=`${data.sourceMode === 'local' ? 'SSH 会话主机' : 'SSH '+(data.sshHost || '')} · ${data.host}\n${data.codexHome}`;
+    $('source').style.whiteSpace='pre-line';
+    if (data.ordinaryUsageAllowed === false) $('error').textContent='当前账号的普通用量受限，请在 Codex 中检查额度说明。';
+    for (const b of data.buckets) {
+      const card=el('article'); card.append(el('h2',`${b.name || b.id || 'Codex'}${b.plan ? ' · '+b.plan : ''}`));
+      for (const w of b.windows) {
+        const section=el('section',null,'window'), row=el('div',null,'row'), remaining=w.remainingPercent;
+        row.append(el('span',duration(w.durationMins)),el('strong',remaining == null ? '未提供' : remaining+'%', 'percent'));section.append(row);
+        if (remaining != null) {const bar=el('progress');bar.max=100;bar.value=remaining;bar.setAttribute('aria-label','剩余额度');bar.style.setProperty('--bar',remaining<=10?'#dc6b5e':remaining<=25?'#c99833':'#10a37f');section.append(bar);}
+        section.append(el('div','记录剩余 · '+resetTime(w.resetsAt),'muted'));card.append(section);
+      }
+      if (!b.windows.length) card.append(el('p','服务未提供额度窗口。','muted'));
+      if (b.limitReached) card.append(el('p','已达到额度限制：'+b.limitReached,'muted'));
+      if (b.credits) card.append(el('p','额外 Credits：'+(b.credits.unlimited?'无限':b.credits.balance??'未提供'),'muted'));
+      $('buckets').append(card);
+    }
+    if (!data.buckets.length) $('buckets').append(el('p','当前账号未返回额度窗口。','empty'));
+    if (data.omittedBuckets) $('buckets').append(el('p',`省略 ${data.omittedBuckets} 个额度分组；完整信息请查看官方用量页面。`,'muted'));
+    $('resets').textContent=data.availableResets == null ? '' : `可用额度重置次数：${data.availableResets}`;
+    $('updated').textContent=`快照记录于 ${data.snapshotRecordedAt ? new Date(data.snapshotRecordedAt).toLocaleString('zh-CN',{hour12:false}) : '未知时间'} · 每 10 分钟检查一次`;
+  }
+  function result(r) {
+    if (r.isError) throw new Error(r.content?.find(c=>c.type==='text')?.text || '查询失败');
+    render(r.structuredContent);
+  }
+  function failure(e) {
+    $('error').textContent=e.message;
+    if (lastData) $('updated').textContent='显示上次成功结果，当前数据可能已过期。';
+    else $('source').textContent='额度尚未读取';
+  }
+  async function refresh(force=false) {
+    if (!ready || busy || disposed) return;
+    busy=true;$('refresh').disabled=true;
+    try {result(await rpc('tools/call',{name:'codex_quota',arguments:force?{force:true}:{}}));} catch(e){failure(e);}
+    finally {busy=false;$('refresh').disabled=!ready;}
+  }
+  function context(ctx) {if(ctx?.theme==='light'||ctx?.theme==='dark')document.documentElement.style.colorScheme=ctx.theme;}
+  function teardown() {disposed=true;clearInterval(timer);clearTimeout(initialTimer);for(const p of pending.values()){clearTimeout(p.timeout);p.reject(new Error('面板已关闭'));}pending.clear();}
+  window.addEventListener('message',event=>{
+    if(event.source!==parent || !event.data || event.data.jsonrpc!=='2.0')return;
+    const m=event.data;
+    if(pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);clearTimeout(p.timeout);m.error?p.reject(new Error(m.error.message)):p.resolve(m.result);return;}
+    if(m.method==='ui/notifications/tool-result'){try{result(m.params);}catch(e){failure(e);}}
+    if(m.method==='ui/notifications/host-context-changed')context(m.params);
+    if(m.method==='ui/resource-teardown'){teardown();parent.postMessage({jsonrpc:'2.0',id:m.id,result:{}},'*');}
+    if(m.method==='ping')parent.postMessage({jsonrpc:'2.0',id:m.id,result:{}},'*');
+  });
+  $('refresh').onclick=()=>refresh(true);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
+  window.addEventListener('pagehide',teardown);
+  (async()=>{
+    if(parent===window){failure(new Error('请从 Codex 的额度面板入口打开，此文件需要 MCP Apps 宿主。'));return;}
+    try{
+      const init=await rpc('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'codex-ssh-quota',version:'0.3.0'},appCapabilities:{availableDisplayModes:['inline','fullscreen']}});
+      context(init.hostContext);
+      send('ui/notifications/initialized');
+      ready=!!init.hostCapabilities?.serverTools;
+      $('refresh').disabled=!ready;
+      if(!ready){failure(new Error('当前桌面版不支持从面板刷新工具，请升级客户端后重试。'));return;}
+      // Prefer the initial tool result; only query if the host has not delivered one.
+      initialTimer=setTimeout(()=>{if(!lastData)refresh();},1200);
+      timer=setInterval(()=>{if(!document.hidden)refresh();},600000);
+    }catch(e){failure(e);}
+  })();
+})();
+</script></html>

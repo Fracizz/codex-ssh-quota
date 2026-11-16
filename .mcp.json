@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codex-ssh-quota": {
+      "command": "python",
+      "args": ["${PLUGIN_ROOT}/server.py"]
+    }
+  }
+}
