@@ -44,7 +44,7 @@ To display the quota directly over the Codex title area:
 python install.py --ssh-host my-codex-server --name dev --hud
 ```
 
-This starts a separate Tk/Win32 companion window anchored to the foreground Codex/ChatGPT desktop main window. It follows window movement and DPI changes, and hides when a dialog or another app takes focus, the client is minimized, or the title area is too narrow. Closing a dialog or widening the main window restores the bar. It shows the configured SSH source's snapshot; it does not automatically switch SSH sources when you change chats.
+This starts a separate Tk/Win32 companion window anchored to the foreground Codex/ChatGPT desktop main window. It follows window movement and DPI changes, and stays on the main title bar while About is open. It hides when another app takes focus, the client is minimized, or the title area is too narrow. It shows the configured SSH source's snapshot; it does not automatically switch SSH sources when you change chats.
 
 The minimal bar shows the SSH display name, recorded weekly remaining quota, and weekly reset date/time. Set a friendly name with `--name` (or `sourceName` in settings). The rounded Query button reads the SSH source immediately, bypassing the ten-minute cache; it is disabled while a read is running. Hover shows the record time.
 

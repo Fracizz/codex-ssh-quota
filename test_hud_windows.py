@@ -14,8 +14,8 @@ class WindowTargetTests(unittest.TestCase):
         self.assertFalse(hud.is_main_window("Chrome_WidgetWin_1", 0x15070000, 42, "ChatGPT.exe"))
         self.assertFalse(hud.is_main_window("Chrome_WidgetWin_1", 0x14C00000, None, "ChatGPT.exe"))
 
-    def test_disabled_main_window_and_other_apps_are_excluded(self):
-        self.assertFalse(hud.is_main_window("Chrome_WidgetWin_1", 0x1D070000, None, "ChatGPT.exe"))
+    def test_modal_disabled_main_is_a_valid_anchor_but_other_apps_are_excluded(self):
+        self.assertTrue(hud.is_main_window("Chrome_WidgetWin_1", 0x1D070000, None, "ChatGPT.exe"))
         self.assertFalse(hud.is_main_window("Chrome_WidgetWin_1", 0x15070000, None, "Other.exe"))
 
     def test_narrow_windows_never_push_the_bar_outside_the_title_area(self):

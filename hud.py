@@ -18,7 +18,7 @@ def is_main_window(class_name, style, owner, executable):
     return (class_name == "Chrome_WidgetWin_1" and not owner
             and executable.lower() in ("chatgpt.exe", "codex.exe")
             and bool(style & 0x00040000)  # WS_THICKFRAME: resizable application window
-            and not style & (0x40000000 | 0x08000000))  # WS_CHILD / WS_DISABLED
+            and not style & 0x40000000)  # A modal dialog can disable its main window.
 
 
 def hud_geometry(rect, width, height, scale):
@@ -468,6 +468,42 @@ def main():
     query_button.bind("<Enter>", query_enter)
     query_button.bind("<Leave>", query_leave)
 
+    enum_callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user.EnumWindows.argtypes = [enum_callback, wintypes.LPARAM]
+
+    def main_for_foreground(window):
+        if not window:
+            return None
+        if is_client_main(window):
+            return window
+        previous = state["target"]
+        pid = process_id(window)
+        if pid == os.getpid():
+            return previous if previous and is_client_main(previous) else None
+        owner = user.GetAncestor(window, 3)  # GA_ROOTOWNER for owned dialogs
+        if owner and owner != window and is_client_main(owner):
+            return owner
+        if previous and process_id(previous) == pid and is_client_main(previous):
+            return previous
+        # Electron can open About without an owner, including before the HUD starts.
+        # Avoid enumerating windows for unrelated foreground applications.
+        class_name = ctypes.create_unicode_buffer(128)
+        user.GetClassNameW(window, class_name, len(class_name))
+        if class_name.value not in ("#32770", "Chrome_WidgetWin_1"):
+            return None
+        found = None
+
+        @enum_callback
+        def find_main(candidate, _):
+            nonlocal found
+            if process_id(candidate) == pid and is_client_main(candidate):
+                found = candidate
+                return False
+            return True
+
+        user.EnumWindows(find_main, 0)
+        return found
+
     def hide():
         dismiss_tooltip()
         source_menu.unpost()
@@ -490,14 +526,11 @@ def main():
             root.geometry(f"{width}x{height}")
             root.update_idletasks()
         fg = user.GetForegroundWindow()
-        target = user.GetAncestor(fg, 2) if fg else None  # GA_ROOT, never a dialog's root owner
-        if target and is_client_main(target):
+        window = user.GetAncestor(fg, 2) if fg else None
+        target = main_for_foreground(window)
+        if target:
             state["target"] = target
-        elif fg and process_id(fg) == os.getpid():
-            target = state["target"]
-        else:
-            target = None
-        if not target or not is_client_main(target):
+        if not target:
             hide()
         else:
             rect = wintypes.RECT()
