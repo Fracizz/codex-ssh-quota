@@ -41,12 +41,14 @@ Open a new chat on the configured host and select **Codex SSH 额度**. Restart 
 To display the quota directly over the Codex title area:
 
 ```powershell
-python install.py --ssh-host my-codex-server --hud
+python install.py --ssh-host my-codex-server --name dev --hud
 ```
 
 This starts a separate Tk/Win32 companion window anchored to the foreground Codex/ChatGPT desktop window. It follows window movement and DPI changes, and hides when another app takes focus or the client is minimized. It shows the configured SSH source's snapshot; it does not automatically switch SSH sources when you change chats.
 
-Left-click opens details. Right-click offers refresh and close. The bar reuses the ten-minute cache and starts no model turns. It does not modify or inject code into the desktop client.
+The minimal bar shows the SSH display name, recorded weekly remaining quota, and weekly reset date/time. Set a friendly name with `--name` (or `sourceName` in settings). The rounded Query button reads the SSH source immediately, bypassing the ten-minute cache; it is disabled while a read is running. Hover shows the record time.
+
+Left-click the text to open details. Right-click offers refresh and close. The bar reuses the ten-minute cache and starts no model turns. It does not modify or inject code into the desktop client.
 
 The companion stays running for the current Windows login session. After restarting Windows, start it again with:
 

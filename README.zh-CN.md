@@ -33,12 +33,12 @@ python3 install.py --local
 ## 在 Windows 主界面直接显示
 
 ```powershell
-python install.py --ssh-host my-codex-server --hud
+python install.py --ssh-host my-codex-server --name dev --hud
 ```
 
-额度条贴在 Codex 窗口顶部，显示例如 `SSH · 周剩余 95%`。它是独立的 Tk/Win32 伴随小窗，会跟随前台 Codex/ChatGPT 窗口移动和缩放，切换到其他应用或最小化客户端时隐藏。显示的是已配置 SSH 来源的快照，不会随聊天自动切换 SSH 来源。
+额度条贴在 Codex 窗口顶部，显示例如 `dev  周剩余 95%  11/21 19:04 重置  [查询]`。它是独立的 Tk/Win32 伴随小窗，会跟随前台 Codex/ChatGPT 窗口移动和缩放，切换到其他应用或最小化客户端时隐藏。显示的是已配置 SSH 来源的快照，不会随聊天自动切换 SSH 来源。
 
-左键点击打开详情；右键可刷新或关闭。继续使用 10 分钟缓存，不调用模型，不修改或注入客户端文件。
+主条显示 SSH 名称、周剩余额度和周额度重置日期时间。名称可用 `--name` 或配置项 `sourceName` 设置。右侧圆角“查询”按钮立即重新读取 SSH 来源并跳过缓存，查询时禁用重复点击。文字区域左键打开详情；右键可刷新或关闭。悬停可查看记录时间。继续使用 10 分钟缓存，不调用模型，不修改或注入客户端文件。
 
 额度条在当前 Windows 登录会话中持续运行。Windows 重启后可再次启动，也可单独关闭：
 

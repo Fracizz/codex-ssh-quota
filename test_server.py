@@ -24,14 +24,24 @@ class QuotaTests(unittest.TestCase):
             launch.assert_not_called()
             self.assertTrue(server.source_key().startswith("local:"))
 
-    def test_hud_shows_remaining_and_marks_expired_snapshots(self):
-        data = {"buckets": [{"id": "codex", "windows": [
+    def test_hud_shows_source_weekly_quota_and_reset_time(self):
+        data = {"sourceName": "example-host", "checkedAt": 9000, "buckets": [{"id": "codex", "windows": [
             {"durationMins": 300, "remainingPercent": 70, "resetsAt": 2000},
             {"durationMins": 10080, "remainingPercent": 96, "resetsAt": 3000}]}]}
-        self.assertEqual(hud.summary(data, now=1000), "SSH · 5小时剩余 70% · 周剩余 96%")
-        expired = hud.summary(data, now=2500)
-        self.assertIn("5小时待更新", expired)
-        self.assertNotIn("70%", expired)
+        shown = hud.summary(data, now=1000)
+        self.assertTrue(shown.startswith("example-host · 本周剩余 96% · "))
+        self.assertNotIn("70%", shown)
+        from datetime import datetime
+        self.assertIn(datetime.fromtimestamp(3000).strftime("%m/%d %H:%M"), shown)
+        self.assertTrue(shown.endswith("重置"))
+        expired = hud.summary(data, now=3500)
+        self.assertIn("本周 待更新", expired)
+        self.assertNotIn("96%", expired)
+        self.assertIn("已到期", expired)
+        self.assertEqual(hud.accent(data, now=1000), "#89cbb1")
+        data["buckets"][0]["windows"][1]["remainingPercent"] = 9
+        self.assertEqual(hud.accent(data, now=1000), "#e59393")
+        self.assertIsNone(hud.weekly_item({}, now=1000)["remaining"])
         data["warning"] = "offline"
         self.assertIn("缓存", hud.summary(data, now=1000))
 

@@ -42,6 +42,7 @@ def main(argv=None):
     sources.add_argument("--local", action="store_true", help="Read snapshots on the current SSH execution host")
     parser.add_argument("--runtime-dir", type=Path, default=Path(__file__).resolve().parent / ".runtime")
     parser.add_argument("--hud", action="store_true", help="Start the Windows main-window quota companion")
+    parser.add_argument("--name", help="SSH display name shown in the main-window quota bar")
     args = parser.parse_args(argv)
     if args.hud and os.name != "nt":
         parser.error("--hud requires the Windows desktop host")
@@ -64,6 +65,14 @@ def main(argv=None):
             parser.error("mode must be ssh or local")
         else:
             settings = {"mode": "local"}
+        label = args.name or configured.get("sourceName") or os.environ.get("CODEX_QUOTA_SOURCE_NAME")
+        if label:
+            if not isinstance(label, str):
+                parser.error("display name must be a string")
+            label = " ".join(label.split())
+            if len(label) > 80:
+                parser.error("display name must be at most 80 characters")
+            settings["sourceName"] = label
         codex = server.executable()
         runtime = args.runtime_dir.resolve()
         if runtime == Path(__file__).resolve().parent:

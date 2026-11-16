@@ -94,6 +94,13 @@ def source_key():
     return "local:" + str(home)
 
 
+def source_name(fallback=None):
+    value = os.environ.get("CODEX_QUOTA_SOURCE_NAME") or load_settings().get("sourceName")
+    if not value:
+        value = ssh_target() if source_mode() == "ssh" else fallback or platform.node()
+    return " ".join(str(value).split())[:80]
+
+
 def read_limits(timeout=15):
     if source_mode() == "local":
         from remote_snapshot import collect
@@ -179,6 +186,7 @@ def normalize(raw):
     account = raw.get("accountId")
     home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).absolute()
     result = {"host": short(raw.get("sourceHost")) or platform.node()[:160],
+              "sourceName": source_name(raw.get("sourceHost")),
               "codexHome": short(raw.get("sourceHome"), 400) or str(home)[:400],
               "snapshotRecordedAt": short(raw.get("snapshotRecordedAt"), 40),
               "accountRef": hashlib.sha256(account.encode()).hexdigest()[:8] if isinstance(account, str) else None,
@@ -211,7 +219,7 @@ def quota(force=False):
         except (OSError, ValueError, TypeError, AttributeError):
             pass
     if not force and _cache is not None and time.monotonic() - _cache[0] < CACHE_SECONDS:
-        return _cache[1]
+        return {**_cache[1], "sourceName": source_name(_cache[1].get("host"))}
     try:
         value = normalize(read_limits())
         value["sshHost"] = host
@@ -227,7 +235,8 @@ def quota(force=False):
         return value
     except QuotaError:
         if _cache is not None:
-            return {**_cache[1], "warning": "数据来源暂时不可用，显示上次缓存的额度记录。"}
+            return {**_cache[1], "sourceName": source_name(_cache[1].get("host")),
+                    "warning": "数据来源暂时不可用，显示上次缓存的额度记录。"}
         raise
 
 
@@ -240,7 +249,7 @@ TOOL = {"name": "codex_quota", "title": "Codex SSH 额度", "description": "查�
 
 def dispatch(method, params):
     if method == "initialize":
-        return {"protocolVersion": "2025-11-25", "serverInfo": {"name": "codex-ssh-quota", "version": "0.4.0"},
+        return {"protocolVersion": "2025-11-25", "serverInfo": {"name": "codex-ssh-quota", "version": "0.4.1"},
                 "capabilities": {"tools": {}, "resources": {}}}
     if method == "ping":
         return {}

@@ -1,4 +1,5 @@
 {
   "mode": "ssh",
-  "sshHost": "my-codex-server"
+  "sshHost": "my-codex-server",
+  "sourceName": "dev"
 }
