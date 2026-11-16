@@ -13,6 +13,23 @@ TITLE = "Codex SSH Quota HUD"
 DETAIL_URL = "codex://plugins/codex-ssh-quota@codex-ssh-quota/app/codex_quota"
 
 
+def is_main_window(class_name, style, owner, executable):
+    """Exclude native dialogs and Electron utility windows, even in the same process."""
+    return (class_name == "Chrome_WidgetWin_1" and not owner
+            and executable.lower() in ("chatgpt.exe", "codex.exe")
+            and bool(style & 0x00040000)  # WS_THICKFRAME: resizable application window
+            and not style & (0x40000000 | 0x08000000))  # WS_CHILD / WS_DISABLED
+
+
+def hud_geometry(rect, width, height, scale):
+    left, top, right, bottom = rect
+    x = right - round(155 * scale) - width
+    y = top + round(7 * scale)
+    if x < left + round(260 * scale) or y + height > bottom:
+        return None
+    return width, height, x, y
+
+
 def button_png(width, height, radius, fill, background, border):
     """Antialiased RGB button background; native Tk renders the text above it."""
     import math
@@ -169,6 +186,9 @@ def main():
     user.GetForegroundWindow.restype = wintypes.HWND
     user.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
     user.GetAncestor.restype = wintypes.HWND
+    user.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    user.GetWindow.restype = wintypes.HWND
+    user.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
     user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
     user.IsWindowVisible.argtypes = [wintypes.HWND]
@@ -183,21 +203,29 @@ def main():
     if hasattr(user, "GetDpiForWindow"):
         user.GetDpiForWindow.argtypes = [wintypes.HWND]
         user.GetDpiForWindow.restype = wintypes.UINT
+    getter = user.GetWindowLongPtrW if hasattr(user, "GetWindowLongPtrW") else user.GetWindowLongW
+    getter.argtypes = [wintypes.HWND, ctypes.c_int]
+    getter.restype = ctypes.c_ssize_t
 
     def process_id(hwnd):
         pid = wintypes.DWORD()
         user.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         return pid.value
 
-    def is_client(hwnd):
+    def is_client_main(hwnd):
+        if not user.IsWindowVisible(hwnd) or user.IsIconic(hwnd):
+            return False
+        class_name = ctypes.create_unicode_buffer(128)
+        user.GetClassNameW(hwnd, class_name, len(class_name))
+        style, owner = getter(hwnd, -16), user.GetWindow(hwnd, 4)  # GW_OWNER
         handle = kernel.OpenProcess(0x1000, False, process_id(hwnd))
         if not handle:
             return False
         try:
             path = ctypes.create_unicode_buffer(32768)
             size = wintypes.DWORD(len(path))
-            return bool(kernel.QueryFullProcessImageNameW(handle, 0, path, ctypes.byref(size))) and (
-                Path(path.value).name.lower() in ("chatgpt.exe", "codex.exe"))
+            return bool(kernel.QueryFullProcessImageNameW(handle, 0, path, ctypes.byref(size))) and is_main_window(
+                class_name.value, style, owner, Path(path.value).name)
         finally:
             kernel.CloseHandle(handle)
 
@@ -222,10 +250,7 @@ def main():
     query_button.pack(side="left")
     root.update_idletasks()
     hud_hwnd = user.GetAncestor(root.winfo_id(), 2)
-    getter = user.GetWindowLongPtrW if hasattr(user, "GetWindowLongPtrW") else user.GetWindowLongW
     setter = user.SetWindowLongPtrW if hasattr(user, "SetWindowLongPtrW") else user.SetWindowLongW
-    getter.argtypes = [wintypes.HWND, ctypes.c_int]
-    getter.restype = ctypes.c_ssize_t
     setter.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
     setter.restype = ctypes.c_ssize_t
     setter(hud_hwnd, -20, getter(hud_hwnd, -20) | 0x08000000 | 0x00000080)
@@ -443,6 +468,12 @@ def main():
     query_button.bind("<Enter>", query_enter)
     query_button.bind("<Leave>", query_leave)
 
+    def hide():
+        dismiss_tooltip()
+        source_menu.unpost()
+        menu.unpost()
+        root.withdraw()
+
     def tick():
         for _ in range(source_catalog.MAX_SOURCES * 2):
             try:
@@ -459,16 +490,15 @@ def main():
             root.geometry(f"{width}x{height}")
             root.update_idletasks()
         fg = user.GetForegroundWindow()
-        target = user.GetAncestor(fg, 3) if fg else None
-        if target and is_client(target):
+        target = user.GetAncestor(fg, 2) if fg else None  # GA_ROOT, never a dialog's root owner
+        if target and is_client_main(target):
             state["target"] = target
         elif fg and process_id(fg) == os.getpid():
             target = state["target"]
         else:
             target = None
-        if not target or not user.IsWindowVisible(target) or user.IsIconic(target):
-            dismiss_tooltip()
-            root.withdraw()
+        if not target or not is_client_main(target):
+            hide()
         else:
             rect = wintypes.RECT()
             user.GetWindowRect(target, ctypes.byref(rect))
@@ -481,9 +511,12 @@ def main():
             scale = max(1, dpi / 96)
             state["scale"] = scale
             width, height = paint(scale)
-            x = max(rect.left + round(260 * scale), rect.right - round(155 * scale) - width)
-            y = rect.top + round(7 * scale)
-            geometry = (width, height, x, y)
+            geometry = hud_geometry((rect.left, rect.top, rect.right, rect.bottom), width, height, scale)
+            if geometry is None:
+                hide()
+                root.after(250, tick)
+                return
+            _, _, x, y = geometry
             if state["geometry"] != geometry:
                 state["geometry"] = geometry
                 root.geometry(f"{width}x{height}+{x}+{y}")

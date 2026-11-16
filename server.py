@@ -315,7 +315,7 @@ TOOL = {"name": "codex_quota", "title": "Codex SSH 额度", "description": "查�
 
 def dispatch(method, params):
     if method == "initialize":
-        return {"protocolVersion": "2025-11-25", "serverInfo": {"name": "codex-ssh-quota", "version": "0.5.0"},
+        return {"protocolVersion": "2025-11-25", "serverInfo": {"name": "codex-ssh-quota", "version": "0.5.1"},
                 "capabilities": {"tools": {}, "resources": {}}}
     if method == "ping":
         return {}

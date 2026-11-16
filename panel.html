@@ -102,7 +102,7 @@
   (async()=>{
     if(parent===window){failure(new Error('请从 Codex 的额度面板入口打开，此文件需要 MCP Apps 宿主。'));return;}
     try{
-      const init=await rpc('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'codex-ssh-quota',version:'0.5.0'},appCapabilities:{availableDisplayModes:['inline','fullscreen']}});
+      const init=await rpc('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'codex-ssh-quota',version:'0.5.1'},appCapabilities:{availableDisplayModes:['inline','fullscreen']}});
       context(init.hostContext);
       send('ui/notifications/initialized');
       ready=!!init.hostCapabilities?.serverTools;
