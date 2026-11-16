@@ -38,7 +38,7 @@ python install.py --ssh-host my-codex-server --name dev --hud
 
 额度条贴在 Codex 窗口顶部，显示例如 `dev  周剩余 95%  11/21 19:04 重置  [查询]`。它是独立的 Tk/Win32 伴随小窗，会跟随前台 Codex/ChatGPT 窗口移动和缩放，切换到其他应用或最小化客户端时隐藏。显示的是已配置 SSH 来源的快照，不会随聊天自动切换 SSH 来源。
 
-主条显示 SSH 名称、周剩余额度和周额度重置日期时间。名称可用 `--name` 或配置项 `sourceName` 设置。右侧圆角“查询”按钮立即重新读取 SSH 来源并跳过缓存，查询时禁用重复点击。文字区域左键打开详情；右键可刷新或关闭。悬停可查看记录时间。继续使用 10 分钟缓存，不调用模型，不修改或注入客户端文件。
+主条显示 SSH 名称、周剩余额度和周额度重置日期时间。名称可用 `--name` 或配置项 `sourceName` 设置。右侧圆角“查询”按钮立即重新读取 SSH 来源并跳过缓存，查询时禁用重复点击。点击主机名称切换来源，点击额度文字打开详情；右键可刷新或关闭。悬停可查看记录时间。继续使用 10 分钟缓存，不调用模型，不修改或注入客户端文件。
 
 额度条在当前 Windows 登录会话中持续运行。Windows 重启后可再次启动，也可单独关闭：
 
@@ -48,6 +48,21 @@ python .runtime/plugin/hud.py --stop
 ```
 
 该功能需要 Tkinter，python.org 的标准 Windows 安装包已包含。MCP 面板和 SSH 主机端不依赖 Tkinter。
+
+## 多个 SSH 来源
+
+点击额度条左侧的主机名称即可切换，选择会保留到下次启动。每个来源独立缓存，只对当前选中来源自动更新。切换时先清除旧主机的数值，再显示所选来源的数据或缓存；其他主机较慢的查询结果不会覆盖当前显示。“查询”按钮和详情链接均对应当前来源。
+
+SSH 模式会读取 `~/.ssh/config` 中明确的 `Host` 别名，忽略通配符；不会自动连接这些主机，也不展开 `Include` 文件。可明确添加并设置易读名称：
+
+```powershell
+python install.py --add-ssh staging=staging-server
+python install.py --add-ssh production=prod-server --no-discover-ssh
+```
+
+添加时保留已有运行配置。`settings.example.json` 包含 `sources` 列表和 `discoverSsh` 开关示例。选择器最多支持 32 个来源，明确配置的来源优先于自动发现项。`--no-discover-ssh` 仅保留明确配置的来源。若设置了 `CODEX_QUOTA_MODE` 或 `CODEX_QUOTA_SSH_HOST`，来源会固定为该环境变量指定项；使用切换器时请清除这两项覆盖。
+
+MCP 客户端可通过 `codex_quota_sources` 分页查看来源（每页 16 项，返回 `nextOffset`），再给 `codex_quota` 传入来源 ID。工具显式查询其他来源不会改动额度条保存的选择。
 
 ## 查询与维护
 

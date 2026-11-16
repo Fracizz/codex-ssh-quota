@@ -48,7 +48,7 @@ This starts a separate Tk/Win32 companion window anchored to the foreground Code
 
 The minimal bar shows the SSH display name, recorded weekly remaining quota, and weekly reset date/time. Set a friendly name with `--name` (or `sourceName` in settings). The rounded Query button reads the SSH source immediately, bypassing the ten-minute cache; it is disabled while a read is running. Hover shows the record time.
 
-Left-click the text to open details. Right-click offers refresh and close. The bar reuses the ten-minute cache and starts no model turns. It does not modify or inject code into the desktop client.
+Click the SSH name to switch sources, or click the quota text to open details. Right-click offers refresh and close. The bar reuses the ten-minute cache and starts no model turns. It does not modify or inject code into the desktop client.
 
 The companion stays running for the current Windows login session. After restarting Windows, start it again with:
 
@@ -59,6 +59,21 @@ python .runtime/plugin/hud.py --stop
 ```
 
 Tkinter is required only for the Windows companion and is included in the standard python.org Windows installer. The MCP panel and SSH-host mode do not need Tkinter.
+
+## Multiple SSH sources
+
+Click the SSH name in the Windows bar to choose a source. The selection is remembered. Each source keeps its own cache; only the selected source is refreshed automatically. Switching sources clears the old display until the selected source's data or cache is ready. A delayed result from another source cannot replace it. The Query button and detail link target the selected source.
+
+SSH mode discovers literal `Host` aliases from `~/.ssh/config`, excluding wildcard entries. Discovery does not connect to them; `Include` files are not expanded. Add friendly names or sources explicitly:
+
+```powershell
+python install.py --add-ssh staging=staging-server
+python install.py --add-ssh production=prod-server --no-discover-ssh
+```
+
+The installer preserves existing runtime settings when adding a source. `settings.example.json` shows the `sources` list and `discoverSsh` option. Up to 32 sources are available in the selector. Explicit sources precede discovered aliases. Set `--no-discover-ssh` to use only configured sources. Setting `CODEX_QUOTA_MODE` or `CODEX_QUOTA_SSH_HOST` pins a single source; clear those overrides to use the selector.
+
+MCP clients can call `codex_quota_sources` (16 entries per page, with `nextOffset`) and pass a returned source ID to `codex_quota`. An explicit tool query does not change the bar's saved selection.
 
 ## Check, update, and remove
 

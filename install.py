@@ -8,9 +8,10 @@ import subprocess
 import sys
 
 import server
+import source_catalog
 
 PLUGIN_ID = "codex-ssh-quota@codex-ssh-quota"
-FILES = ("server.py", "remote_snapshot.py", "panel.html", "hud.py", "LICENSE", "plugin.json", ".codex-plugin/plugin.json")
+FILES = ("server.py", "source_catalog.py", "remote_snapshot.py", "panel.html", "hud.py", "LICENSE", "plugin.json", ".codex-plugin/plugin.json")
 
 
 def prepare(runtime, settings):
@@ -43,11 +44,20 @@ def main(argv=None):
     parser.add_argument("--runtime-dir", type=Path, default=Path(__file__).resolve().parent / ".runtime")
     parser.add_argument("--hud", action="store_true", help="Start the Windows main-window quota companion")
     parser.add_argument("--name", help="SSH display name shown in the main-window quota bar")
+    parser.add_argument("--add-ssh", action="append", default=[], metavar="NAME=HOST", help="Add or rename a selectable SSH source")
+    parser.add_argument("--discover-ssh", action=argparse.BooleanOptionalAction, default=None, help="Include literal Host aliases from the SSH config")
     args = parser.parse_args(argv)
     if args.hud and os.name != "nt":
         parser.error("--hud requires the Windows desktop host")
     try:
         configured = server.load_settings()
+        saved = args.runtime_dir.resolve() / "plugin/settings.json"
+        if not configured and saved.exists():
+            if saved.stat().st_size > 16384:
+                parser.error("runtime settings exceed 16 KiB")
+            configured = json.loads(saved.read_text(encoding="utf-8"))
+            if not isinstance(configured, dict):
+                parser.error("runtime settings must be an object")
         if args.local:
             settings = {"mode": "local"}
         elif args.ssh_host:
@@ -65,6 +75,9 @@ def main(argv=None):
             parser.error("mode must be ssh or local")
         else:
             settings = {"mode": "local"}
+        for key in ("sources", "discoverSsh"):
+            if key in configured:
+                settings[key] = configured[key]
         label = args.name or configured.get("sourceName") or os.environ.get("CODEX_QUOTA_SOURCE_NAME")
         if label:
             if not isinstance(label, str):
@@ -73,6 +86,23 @@ def main(argv=None):
             if len(label) > 80:
                 parser.error("display name must be at most 80 characters")
             settings["sourceName"] = label
+        if args.discover_ssh is not None:
+            settings["discoverSsh"] = args.discover_ssh
+        extras = list(settings.get("sources") or [])
+        for value in args.add_ssh:
+            name, separator, host = value.partition("=")
+            entry = source_catalog.profile({"sshHost": host, "sourceName": name})
+            if not separator or not name.strip() or len(name.strip()) > 80 or entry is None:
+                parser.error("--add-ssh expects NAME=HOST with a valid SSH alias")
+            if settings["mode"] == "ssh" and settings["sshHost"] == host:
+                settings["sourceName"] = args.name or entry["sourceName"]
+            else:
+                extras = [item for item in extras if item.get("sshHost") != host]
+                extras.append({"mode": "ssh", "sshHost": host, "sourceName": entry["sourceName"]})
+        if len(extras) >= source_catalog.MAX_SOURCES:
+            parser.error("at most 32 explicit sources are supported")
+        if extras:
+            settings["sources"] = extras
         codex = server.executable()
         runtime = args.runtime_dir.resolve()
         if runtime == Path(__file__).resolve().parent:

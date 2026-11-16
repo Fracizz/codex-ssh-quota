@@ -12,7 +12,7 @@
 <script>
 (() => {
   const $ = id => document.getElementById(id), pending = new Map();
-  let serial = 0, ready = false, busy = false, timer, lastData, initialTimer, disposed = false;
+  let serial = 0, ready = false, busy = false, timer, lastData, initialTimer, disposed = false, wantedSource = null;
   function send(method, params = {}) { parent.postMessage({jsonrpc:'2.0',method,params}, '*'); }
   function rpc(method, params) {
     return new Promise((resolve,reject) => {
@@ -37,7 +37,7 @@
   function render(data) {
     if (!data || !Array.isArray(data.buckets)) throw new Error('额度数据格式异常。');
     lastData=data; $('error').textContent=data.warning || ''; $('buckets').replaceChildren();
-    $('source').textContent=`${data.sourceMode === 'local' ? 'SSH 会话主机' : 'SSH '+(data.sshHost || '')} · ${data.host}\n${data.codexHome}`;
+    $('source').textContent=`${data.sourceName || (data.sourceMode === 'local' ? 'SSH 会话主机' : 'SSH '+(data.sshHost || ''))} · ${data.host}\n${data.codexHome}`;
     $('source').style.whiteSpace='pre-line';
     if (data.ordinaryUsageAllowed === false) $('error').textContent='当前账号的普通用量受限，请在 Codex 中检查额度说明。';
     for (const b of data.buckets) {
@@ -58,8 +58,12 @@
     $('resets').textContent=data.availableResets == null ? '' : `可用额度重置次数：${data.availableResets}`;
     $('updated').textContent=`快照记录于 ${data.snapshotRecordedAt ? new Date(data.snapshotRecordedAt).toLocaleString('zh-CN',{hour12:false}) : '未知时间'} · 每 10 分钟检查一次`;
   }
-  function result(r) {
+  function result(r, initial=false) {
     if (r.isError) throw new Error(r.content?.find(c=>c.type==='text')?.text || '查询失败');
+    if (wantedSource && r.structuredContent?.sourceId !== wantedSource) {
+      if(initial)return;
+      throw new Error('返回来源与当前选择不一致，请重新查询。');
+    }
     render(r.structuredContent);
   }
   function failure(e) {
@@ -70,16 +74,24 @@
   async function refresh(force=false) {
     if (!ready || busy || disposed) return;
     busy=true;$('refresh').disabled=true;
-    try {result(await rpc('tools/call',{name:'codex_quota',arguments:force?{force:true}:{}}));} catch(e){failure(e);}
-    finally {busy=false;$('refresh').disabled=!ready;}
+    const requestedSource=wantedSource;
+    const args=force?{force:true}:{};
+    if(requestedSource)args.source=requestedSource;
+    try {const r=await rpc('tools/call',{name:'codex_quota',arguments:args});if(requestedSource===wantedSource)result(r);} catch(e){if(requestedSource===wantedSource)failure(e);}
+    finally {busy=false;$('refresh').disabled=!ready;if(requestedSource!==wantedSource)refresh();}
   }
-  function context(ctx) {if(ctx?.theme==='light'||ctx?.theme==='dark')document.documentElement.style.colorScheme=ctx.theme;}
+  function context(ctx) {
+    if(ctx?.theme==='light'||ctx?.theme==='dark')document.documentElement.style.colorScheme=ctx.theme;
+    const path=ctx?.['openai/deepLink']?.url;
+    const match=typeof path==='string'?path.match(/^\/source\/([a-f0-9]{12})$/):null;
+    if(match&&match[1]!==wantedSource){wantedSource=match[1];lastData=null;$('buckets').replaceChildren();$('source').textContent='正在读取所选 SSH 来源…';if(ready)refresh();}
+  }
   function teardown() {disposed=true;clearInterval(timer);clearTimeout(initialTimer);for(const p of pending.values()){clearTimeout(p.timeout);p.reject(new Error('面板已关闭'));}pending.clear();}
   window.addEventListener('message',event=>{
     if(event.source!==parent || !event.data || event.data.jsonrpc!=='2.0')return;
     const m=event.data;
     if(pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);clearTimeout(p.timeout);m.error?p.reject(new Error(m.error.message)):p.resolve(m.result);return;}
-    if(m.method==='ui/notifications/tool-result'){try{result(m.params);}catch(e){failure(e);}}
+    if(m.method==='ui/notifications/tool-result'){try{result(m.params,true);}catch(e){failure(e);}}
     if(m.method==='ui/notifications/host-context-changed')context(m.params);
     if(m.method==='ui/resource-teardown'){teardown();parent.postMessage({jsonrpc:'2.0',id:m.id,result:{}},'*');}
     if(m.method==='ping')parent.postMessage({jsonrpc:'2.0',id:m.id,result:{}},'*');
@@ -90,7 +102,7 @@
   (async()=>{
     if(parent===window){failure(new Error('请从 Codex 的额度面板入口打开，此文件需要 MCP Apps 宿主。'));return;}
     try{
-      const init=await rpc('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'codex-ssh-quota',version:'0.4.1'},appCapabilities:{availableDisplayModes:['inline','fullscreen']}});
+      const init=await rpc('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'codex-ssh-quota',version:'0.5.0'},appCapabilities:{availableDisplayModes:['inline','fullscreen']}});
       context(init.hostContext);
       send('ui/notifications/initialized');
       ready=!!init.hostCapabilities?.serverTools;

@@ -1,5 +1,13 @@
 {
   "mode": "ssh",
   "sshHost": "my-codex-server",
-  "sourceName": "dev"
+  "sourceName": "dev",
+  "discoverSsh": true,
+  "sources": [
+    {
+      "mode": "ssh",
+      "sshHost": "staging-server",
+      "sourceName": "staging"
+    }
+  ]
 }

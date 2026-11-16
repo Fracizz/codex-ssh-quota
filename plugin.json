@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "codex-ssh-quota",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "通过 SSH 在桌面面板中查看远端 Codex 最近记录的额度。",
   "license": "MIT",
   "author": {

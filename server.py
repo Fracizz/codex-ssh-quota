@@ -1,6 +1,10 @@
 """Read-only local MCP App for Codex quota. Python 3.10+, no dependencies."""
 
 import hashlib
+import contextvars
+import threading
+
+import source_catalog
 import json
 import math
 import os
@@ -12,12 +16,14 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parent
-URI = "ui://codex-ssh-quota/panel-v2.html"
+URI = "ui://codex-ssh-quota/panel-v3.html"
 MAX_MESSAGE = 1024 * 1024
 MAX_BUCKETS = 20
 MAX_RESULT = 32768
 CACHE_SECONDS = 600
 _cache = None
+_cache_lock = threading.RLock()
+_source_context = contextvars.ContextVar("quota_source", default=None)
 
 
 class QuotaError(Exception):
@@ -62,7 +68,7 @@ def load_settings():
     if not path.exists():
         return {}
     try:
-        if path.stat().st_size > 4096:
+        if path.stat().st_size > 16384:
             raise ValueError()
         value = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(value, dict):
@@ -72,19 +78,64 @@ def load_settings():
         raise QuotaError("settings.json 无效，请重新运行安装器配置数据来源。")
 
 
+def available_sources():
+    return source_catalog.catalog(load_settings())
+
+
+def selection_path():
+    base = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / ".cache"))) / "CodexSSHQuota"
+    return base / "selected-source.json"
+
+
+def resolve_source(source=None):
+    entries, _ = available_sources()
+    if not entries:
+        raise QuotaError("请先运行安装器配置 SSH 来源，或在 SSH 主机上使用 --local。")
+    if source is None:
+        try:
+            saved = selection_path()
+            if saved.stat().st_size <= 1024:
+                source = json.loads(saved.read_text(encoding="utf-8")).get("sourceId")
+        except (OSError, ValueError, AttributeError):
+            pass
+        return next((item for item in entries if item["id"] == source), entries[0])
+    exact = next((item for item in entries if item["id"] == source), None)
+    if exact:
+        return exact
+    matches = [item for item in entries if source in (item["sourceName"], item["sshHost"])]
+    if not matches:
+        raise QuotaError("来源不存在，请先调用 codex_quota_sources 查看已配置来源。")
+    if len(matches) > 1:
+        raise QuotaError("来源名称重复，请使用 codex_quota_sources 返回的来源 ID。")
+    return matches[0]
+
+
+def select_source(source):
+    entry = resolve_source(source)
+    path = selection_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_suffix(f".{os.getpid()}-{threading.get_ident()}.tmp")
+        temp.write_text(json.dumps({"sourceId": entry["id"]}), encoding="utf-8")
+        temp.replace(path)
+    except OSError as exc:
+        raise QuotaError("无法保存所选来源，请检查本机缓存目录的写权限。") from exc
+    return entry
+
+
+def active_source():
+    return _source_context.get() or resolve_source()
+
+
 def source_mode():
-    mode = os.environ.get("CODEX_QUOTA_MODE") or load_settings().get("mode", "ssh")
-    if mode not in ("ssh", "local"):
-        raise QuotaError("数据来源 mode 必须为 ssh 或 local。")
-    return mode
+    return active_source()["mode"]
 
 
 def ssh_target():
-    host = os.environ.get("CODEX_QUOTA_SSH_HOST") or load_settings().get("sshHost", "")
-    import re
-    if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@:-]{0,190}", host):
-        raise QuotaError("请运行 python install.py --ssh-host <SSH别名>，或在 SSH 主机运行 python install.py --local。")
-    return host
+    value = active_source().get("sshHost", "")
+    if not value:
+        raise QuotaError("当前来源未配置 SSH 地址。")
+    return value
 
 
 def source_key():
@@ -95,10 +146,7 @@ def source_key():
 
 
 def source_name(fallback=None):
-    value = os.environ.get("CODEX_QUOTA_SOURCE_NAME") or load_settings().get("sourceName")
-    if not value:
-        value = ssh_target() if source_mode() == "ssh" else fallback or platform.node()
-    return " ".join(str(value).split())[:80]
+    return active_source().get("sourceName") or fallback or platform.node()
 
 
 def read_limits(timeout=15):
@@ -204,44 +252,62 @@ def cache_path(host):
     return base / (hashlib.sha256(host.encode()).hexdigest()[:16] + ".json")
 
 
-def quota(force=False):
+def quota(force=False, source=None):
+    profile = resolve_source(source)
+    token = _source_context.set(profile)
+    try:
+        return _quota_for_source(force)
+    finally:
+        _source_context.reset(token)
+
+
+def _quota_for_source(force):
     global _cache
     host = source_key()
     path = cache_path(host)
-    if _cache is None or _cache[1].get("sshHost") != host:
-        _cache = None
+    with _cache_lock:
+        if _cache is None:
+            _cache = {}
+        cached = _cache.get(host)
+    if cached is None:
         try:
             if path.stat().st_size <= MAX_RESULT:
                 saved = json.loads(path.read_text(encoding="utf-8"))
                 if saved.get("sshHost") == host and isinstance(saved.get("buckets"), list):
                     age = max(0, time.time() - saved.get("checkedAt", 0))
-                    _cache = (time.monotonic() - age, saved)
+                    cached = (time.monotonic()-age, saved)
         except (OSError, ValueError, TypeError, AttributeError):
             pass
-    if not force and _cache is not None and time.monotonic() - _cache[0] < CACHE_SECONDS:
-        return {**_cache[1], "sourceName": source_name(_cache[1].get("host"))}
+    def decorate(value):
+        return {**value, "sourceName": source_name(value.get("host")), "sourceId": active_source()["id"]}
+    if not force and cached is not None and time.monotonic()-cached[0] < CACHE_SECONDS:
+        with _cache_lock:
+            _cache[host] = cached
+        return decorate(cached[1])
     try:
         value = normalize(read_limits())
-        value["sshHost"] = host
-        value["sourceMode"] = source_mode()
-        _cache = (time.monotonic(), value)
+        value.update({"sshHost": host, "sourceMode": source_mode(), "sourceId": active_source()["id"]})
+        with _cache_lock:
+            _cache[host] = (time.monotonic(), value)
+            if len(_cache) > source_catalog.MAX_SOURCES:
+                oldest = min(_cache, key=lambda key: _cache[key][0])
+                del _cache[oldest]
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            temp = path.with_suffix(".tmp")
+            temp = path.with_suffix(f".{os.getpid()}-{threading.get_ident()}.tmp")
             temp.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
             temp.replace(path)
         except OSError:
             pass
-        return value
+        return decorate(value)
     except QuotaError:
-        if _cache is not None:
-            return {**_cache[1], "sourceName": source_name(_cache[1].get("host")),
-                    "warning": "数据来源暂时不可用，显示上次缓存的额度记录。"}
+        if cached is not None:
+            return decorate({**cached[1], "warning": "数据来源暂时不可用，显示上次缓存的额度记录。"})
         raise
 
 
 TOOL = {"name": "codex_quota", "title": "Codex SSH 额度", "description": "查看 SSH 环境的 Codex 额度快照。可从桌面通过 SSH 读取，也可在 SSH 会话主机上直接读取，缓存 10 分钟。",
-        "inputSchema": {"type": "object", "properties": {"force": {"type": "boolean", "description": "重新通过 SSH 读取快照"}}, "additionalProperties": False},
+        "inputSchema": {"type": "object", "properties": {"force": {"type": "boolean", "description": "重新通过 SSH 读取快照"}, "source": {"type": "string", "description": "可选的来源 ID、名称或 SSH 别名"}}, "additionalProperties": False},
         "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
         "_meta": {"ui": {"resourceUri": URI, "visibility": ["app", "model"]},
                   "openai/ui": {"entrypoints": [{"type": "thread"}, {"type": "global"}]}}}
@@ -249,12 +315,15 @@ TOOL = {"name": "codex_quota", "title": "Codex SSH 额度", "description": "查�
 
 def dispatch(method, params):
     if method == "initialize":
-        return {"protocolVersion": "2025-11-25", "serverInfo": {"name": "codex-ssh-quota", "version": "0.4.1"},
+        return {"protocolVersion": "2025-11-25", "serverInfo": {"name": "codex-ssh-quota", "version": "0.5.0"},
                 "capabilities": {"tools": {}, "resources": {}}}
     if method == "ping":
         return {}
     if method == "tools/list":
-        return {"tools": [TOOL]}
+        return {"tools": [TOOL, {"name": "codex_quota_sources", "title": "SSH 额度来源",
+                "description": "列出可查询的 SSH 来源及当前选择，每页最多16项。",
+                "inputSchema": {"type": "object", "properties": {"offset": {"type": "integer", "minimum": 0}}, "additionalProperties": False},
+                "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}}]}
     if method == "resources/list":
         return {"resources": [{"uri": URI, "name": "Codex SSH 额度", "mimeType": "text/html;profile=mcp-app"}]}
     if method == "resources/read" and params.get("uri") == URI:
@@ -262,12 +331,24 @@ def dispatch(method, params):
                               "text": (ROOT / "panel.html").read_text(encoding="utf-8"),
                               "_meta": {"ui": {"csp": {"connectDomains": [], "resourceDomains": []}},
                                         "openai/ui": {"availableDisplayModes": ["inline", "fullscreen"], "preferredDisplayMode": "inline"}}}]}
+    if method == "tools/call" and params.get("name") == "codex_quota_sources":
+        arguments = params.get("arguments") or {}
+        offset = arguments.get("offset", 0) if isinstance(arguments, dict) else None
+        if type(offset) is not int or offset < 0 or set(arguments)-{"offset"}:
+            return {"isError": True, "content": [{"type": "text", "text": "offset 必须为非负整数。"}]}
+        entries, omitted = available_sources()
+        data = {"sources": entries[offset:offset+16], "selectedSource": resolve_source()["id"],
+                "nextOffset": offset+16 if offset+16 < len(entries) else None,
+                "omittedCount": omitted}
+        if omitted:
+            data["omittedHint"] = "用安装器 --add-ssh NAME=HOST 添加目标来源，或用 --no-discover-ssh 仅显示明确配置。"
+        return {"content": [{"type": "text", "text": "已列出 SSH 来源。"}], "structuredContent": data}
     if method == "tools/call" and params.get("name") == TOOL["name"]:
         arguments = params.get("arguments") or {}
-        if not isinstance(arguments, dict) or set(arguments) - {"force"} or ("force" in arguments and type(arguments["force"]) is not bool):
+        if not isinstance(arguments, dict) or set(arguments) - {"force", "source"} or ("force" in arguments and type(arguments["force"]) is not bool) or ("source" in arguments and not isinstance(arguments["source"], str)):
             return {"isError": True, "content": [{"type": "text", "text": "参数使用 {} 或 {\"force\": true}。"}]}
         try:
-            data = quota(force=arguments.get("force", False))
+            data = quota(force=arguments.get("force", False), source=arguments.get("source"))
             return {"content": [{"type": "text", "text": "已读取 Codex SSH 额度快照。"}], "structuredContent": data}
         except QuotaError as exc:
             return {"isError": True, "content": [{"type": "text", "text": str(exc)}]}

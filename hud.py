@@ -7,6 +7,7 @@ import threading
 import time
 
 import server
+import source_catalog
 
 TITLE = "Codex SSH Quota HUD"
 DETAIL_URL = "codex://plugins/codex-ssh-quota@codex-ssh-quota/app/codex_quota"
@@ -113,8 +114,29 @@ def tooltip_text(data, error=None):
         captured = "未知时间"
     status = "当前显示上次保存的记录" if data.get("warning") or error else "约每 10 分钟更新一次"
     reset, suffix = reset_label(data)
-    return f"{source_label(data)} · 额度快照\n{str(source)[:120]}\n周额度 {reset} {suffix}\n记录于 {captured}\n{status}\n\n单击查看详情 · 右键更多操作"
+    return f"{source_label(data)} · 额度快照\n{str(source)[:120]}\n周额度 {reset} {suffix}\n记录于 {captured}\n{status}\n\n点击名称切换主机 · 点击额度查看详情"
 
+
+
+def accept_source_result(state, message):
+    source_id = message["sourceId"]
+    state["pending"].discard(source_id)
+    if message.get("data") and message["data"].get("sourceId") != source_id:
+        message = {"sourceId": source_id, "error": "来源校验未通过，请重新查询。"}
+    previous = state["results"].get(source_id, {})
+    if "error" in message and previous.get("data"):
+        message = {**message, "data": {**previous["data"], "warning": message["error"]}}
+    state["results"][source_id] = message
+    state["nextReads"][source_id] = time.monotonic() + server.CACHE_SECONDS
+    if len(state["results"]) > source_catalog.MAX_SOURCES:
+        old = next(key for key in state["results"] if key != state["source"]["id"])
+        del state["results"][old]
+        state["nextReads"].pop(old, None)
+    if source_id != state["source"]["id"]:
+        return False
+    state["data"] = message.get("data")
+    state["error"] = message.get("error")
+    return True
 
 def main():
     if os.name != "nt":
@@ -215,8 +237,9 @@ def main():
     except OSError:
         pass
 
-    messages = queue.Queue(maxsize=1)
-    state = {"fetching": False, "nextRead": 0, "target": None, "data": None,
+    messages = queue.Queue(maxsize=source_catalog.MAX_SOURCES * 2)
+    state = {"fetching": False, "target": None, "data": None,
+             "source": server.resolve_source(), "pending": set(), "results": {}, "nextReads": {},
              "error": None, "hover": False, "paintKey": None, "geometry": None,
              "tooltip": None, "hoverTimer": None, "queryHover": False, "buttonImages": {}, "buttonImageKey": None,
              "scale": max(1, user.GetDpiForWindow(hud_hwnd) / 96) if hasattr(user, "GetDpiForWindow") else 1}
@@ -262,7 +285,7 @@ def main():
             state["hoverTimer"] = root.after(500, show_tooltip)
 
     def paint(scale):
-        data = state["data"] or {"sourceName": server.source_name()}
+        data = {**(state["data"] or {}), "sourceName": state["source"]["sourceName"]}
         if state["error"]:
             data = {**data, "warning": state["error"]}
         item = weekly_item(data)
@@ -312,21 +335,74 @@ def main():
         state["size"] = width, height
         return width, height
 
+    query_slots = threading.Semaphore(4)
     def refresh(force=False):
-        if state["fetching"]:
+        source_id = state["source"]["id"]
+        if source_id in state["pending"]:
             return
+        if len(state["pending"]) >= source_catalog.MAX_SOURCES:
+            state["error"] = "查询较多，请稍后重试。"
+            state["nextReads"][source_id] = time.monotonic()+1
+            return
+        state["pending"].add(source_id)
         state["fetching"] = True
         dismiss_tooltip()
         def work():
-            try:
-                messages.put({"data": server.quota(force=force)})
-            except Exception:
-                messages.put({"error": "暂时无法读取远端额度，请右键刷新重试"})
+            with query_slots:
+                try:
+                    data = server.quota(force=force, source=source_id)
+                    messages.put({"sourceId": source_id, "data": data})
+                except Exception:
+                    messages.put({"sourceId": source_id, "error": "暂时无法读取此主机额度，请点击查询重试"})
         threading.Thread(target=work, daemon=True).start()
+
+    selected = tk.StringVar(value=state["source"]["id"])
+    source_menu = tk.Menu(root, tearoff=False, bg="#282c32", fg="#dce1e9", activebackground="#3c434d",
+                         activeforeground="#ffffff", selectcolor="#bdcbe0", relief="flat", borderwidth=1)
+
+    def choose_source(source_id):
+        try:
+            entry = server.select_source(source_id)
+        except server.QuotaError as exc:
+            selected.set(state["source"]["id"])
+            state["error"] = str(exc)
+            return
+        state["source"] = entry
+        selected.set(entry["id"])
+        previous = state["results"].get(entry["id"], {})
+        state["data"] = previous.get("data")
+        state["error"] = previous.get("error")
+        state["fetching"] = entry["id"] in state["pending"]
+        state["nextReads"][entry["id"]] = 0
+        state["paintKey"] = None
+        dismiss_tooltip()
+
+    def switch_menu(event):
+        dismiss_tooltip()
+        entries, omitted = server.available_sources()
+        source_menu.delete(0, "end")
+        source_menu.configure(font=("Microsoft YaHei UI", -round(12 * state["scale"])))
+        names = [entry["sourceName"] for entry in entries]
+        for entry in entries:
+            label = entry["sourceName"]
+            if names.count(label) > 1:
+                label += " (" + entry["sshHost"] + ")"
+            label = label if len(label) <= 48 else label[:47] + "…"
+            source_menu.add_radiobutton(label=label, variable=selected, value=entry["id"],
+                                        command=lambda key=entry["id"]: choose_source(key))
+        if omitted:
+            source_menu.add_separator()
+            source_menu.add_command(label=f"另有 {omitted} 项，请在配置中精简来源", state="disabled")
+        try:
+            source_menu.tk_popup(name_label.winfo_rootx(), root.winfo_y()+root.winfo_height()+4)
+        finally:
+            source_menu.grab_release()
 
     def details(_event=None):
         dismiss_tooltip()
-        os.startfile(DETAIL_URL)
+        from urllib.parse import quote
+        path = quote("/source/"+state["source"]["id"], safe="")
+        os.startfile(DETAIL_URL+"?path="+path)
 
     query_button.configure(command=lambda: refresh(True))
 
@@ -348,7 +424,11 @@ def main():
         if not (root.winfo_x() <= x < root.winfo_x()+root.winfo_width() and
                 root.winfo_y() <= y < root.winfo_y()+root.winfo_height()):
             hover(False)
-    for widget in (strip, name_label, quota_label, reset_time_label):
+    name_label.bind("<Button-1>", switch_menu)
+    name_label.bind("<Button-3>", popup)
+    name_label.bind("<Enter>", lambda _event: hover(True))
+    name_label.bind("<Leave>", lambda _event: root.after(30, check_leave))
+    for widget in (strip, quota_label, reset_time_label):
         widget.bind("<Button-1>", details)
         widget.bind("<Button-3>", popup)
         widget.bind("<Enter>", lambda _event: hover(True))
@@ -364,19 +444,15 @@ def main():
     query_button.bind("<Leave>", query_leave)
 
     def tick():
-        try:
-            message = messages.get_nowait()
-        except queue.Empty:
-            message = None
-        if message:
-            state["fetching"] = False
-            state["nextRead"] = time.monotonic() + server.CACHE_SECONDS
-            if "data" in message:
-                state["data"] = message["data"]
-                state["error"] = None
-            else:
-                state["error"] = message["error"]
-        if time.monotonic() >= state["nextRead"]:
+        for _ in range(source_catalog.MAX_SOURCES * 2):
+            try:
+                message = messages.get_nowait()
+            except queue.Empty:
+                break
+            accept_source_result(state, message)
+        current = state["source"]["id"]
+        state["fetching"] = current in state["pending"]
+        if time.monotonic() >= state["nextReads"].get(current, 0):
             refresh()
         width, height = paint(state["scale"])
         if state["geometry"] is None:
