@@ -271,7 +271,6 @@ def main():
              "tooltip": None, "hoverTimer": None, "queryHover": False, "buttonImages": {}, "buttonImageKey": None,
              "scale": max(1, user.GetDpiForWindow(hud_hwnd) / 96) if hasattr(user, "GetDpiForWindow") else 1}
     label_font = tkfont.Font(family="Microsoft YaHei UI", size=-12)
-    value_font = tkfont.Font(family="Microsoft YaHei UI", size=-13, weight="bold")
 
     def dismiss_tooltip():
         if state["hoverTimer"]:
@@ -327,10 +326,9 @@ def main():
             return state["size"]
         state["paintKey"] = key
         label_font.configure(size=-round(12 * scale), weight="normal")
-        value_font.configure(size=-round(13 * scale))
-        bg = "#26282c"
+        bg = "#252629"
         strip.configure(bg=bg)
-        name_label.configure(text=f"{name} ⌄", font=label_font, bg=bg, fg="#b4c9e6")
+        name_label.configure(text=f"{name} ▾", font=label_font, bg=bg, fg="#bbcadb")
         quota_label.configure(text=item["label"].replace("本周剩余", "周剩余"), font=label_font,
                              fg="#c3c7cf", bg=bg)
         remaining = item["remaining"]
@@ -339,22 +337,22 @@ def main():
             value_color = "#b0b5bf"
         elif remaining <= 25 or data.get("warning"):
             value_color = accent(data)
-        value_label.configure(text=item["value"], font=value_font, fg=value_color, bg=bg)
+        value_label.configure(text=item["value"], font=label_font, fg=value_color, bg=bg)
         reset_text = f"{suffix} {reset}" if suffix == "重置" else f"{reset} {suffix}".strip()
         if state["fetching"] and state["data"] is None:
             reset_text = ""
         reset_time_label.configure(text=reset_text, font=label_font, fg="#b2b8c2", bg=bg)
         name_label.pack_configure(padx=(round(10*scale), 0))
         quota_label.pack_configure(padx=(round(12*scale), 0))
-        value_label.pack_configure(padx=(round(3*scale), 0))
-        reset_time_label.pack_configure(padx=(round(12*scale) if reset_text else 0, 0))
+        value_label.pack_configure(padx=(round(5*scale), 0))
+        reset_time_label.pack_configure(padx=(round(15*scale) if reset_text else 0, 0))
         image_key = scale, bg
         if state["buttonImageKey"] != image_key:
             import base64
             width, height, radius = round(49*scale), round(21*scale), round(9*scale)
             state["buttonImages"] = {
-                "normal": tk.PhotoImage(data=base64.b64encode(button_png(width, height, radius, "#334050", bg, "#49596b"))),
-                "hover": tk.PhotoImage(data=base64.b64encode(button_png(width, height, radius, "#41526a", bg, "#657c97"))),
+                "normal": tk.PhotoImage(data=base64.b64encode(button_png(width, height, radius, "#353941", bg, "#484e58"))),
+                "hover": tk.PhotoImage(data=base64.b64encode(button_png(width, height, radius, "#424952", bg, "#606976"))),
                 "disabled": tk.PhotoImage(data=base64.b64encode(button_png(width, height, radius, "#302f34", bg, "#3d3b43")))
             }
             state["buttonImageKey"] = image_key
